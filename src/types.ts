@@ -25,6 +25,8 @@ export type Input = {
   parent_uuid?: string;
   parentSessionId?: string;
   parent_session_id?: string;
+  tool_name?: string;
+  tool_input?: { file_path?: string; notebook_path?: string };
 };
 
 export type TranscriptLog = {
