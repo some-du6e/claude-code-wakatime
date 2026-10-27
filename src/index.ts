@@ -57,6 +57,8 @@ async function main() {
       if (await sendHeartbeat(inp)) {
         await updateState(inp);
       }
+    } else {
+      await updateState(inp, false);
     }
   } catch (err) {
     logger.errorException(err);

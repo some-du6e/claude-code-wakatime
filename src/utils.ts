@@ -27,22 +27,41 @@ function getStateFile(inp: Input): string {
   return path.join(getHomeDirectory(), '.wakatime', 'claude-code', `${sanitizeFileName(getFallbackStateId(inp))}.wakatime`);
 }
 
-export function shouldSendHeartbeat(inp?: Input): boolean {
-  if (!inp) return false;
-
+function readState(inp: Input): State {
   try {
-    const last = (JSON.parse(fs.readFileSync(getStateFile(inp), 'utf-8')) as State).lastHeartbeatAt ?? timestamp();
-    return timestamp() - last >= 60;
+    return JSON.parse(fs.readFileSync(getStateFile(inp), 'utf-8')) as State;
   } catch {
-    return true;
+    return {};
   }
 }
 
-export async function updateState(inp?: Input) {
+export function getToolFile(inp?: Input): string | undefined {
+  const filePath = inp?.tool_input?.file_path ?? inp?.tool_input?.notebook_path;
+  return filePath && path.isAbsolute(filePath) ? filePath : undefined;
+}
+
+export function getLastFile(inp: Input): string | undefined {
+  const file = readState(inp).lastFile;
+  return file && fs.existsSync(file) ? file : undefined;
+}
+
+export function shouldSendHeartbeat(inp?: Input): boolean {
+  if (!inp) return false;
+  // File activity always goes through; everything else is throttled
+  if (getToolFile(inp)) return true;
+
+  const last = readState(inp).lastHeartbeatAt;
+  return last === undefined || timestamp() - last >= 60;
+}
+
+export async function updateState(inp?: Input, sent = true) {
   if (!inp) return;
+  const state = readState(inp);
+  if (sent) state.lastHeartbeatAt = timestamp();
+  state.lastFile = getToolFile(inp) ?? state.lastFile;
   const file = getStateFile(inp);
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  await fs.promises.writeFile(file, JSON.stringify({ lastHeartbeatAt: timestamp() } as State, null, 2));
+  await fs.promises.writeFile(file, JSON.stringify(state, null, 2));
 }
 
 export async function getClaudeVersion(inp: Input | undefined): Promise<string> {

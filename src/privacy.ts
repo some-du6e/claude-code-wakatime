@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Options } from './options';
 import { Input } from './types';
+import { getLastFile, getToolFile } from './utils';
 
 // Same keys as codex-wakatime's privacy layer, so one ~/.wakatime.cfg covers both.
 export type Heartbeat = {
@@ -22,9 +23,10 @@ function getSetting(options: Options, env: string, key: string): string | undefi
 }
 
 export function buildHeartbeat(options: Options, inp: Input): Heartbeat {
-  const filePath = inp.tool_input?.file_path ?? inp.tool_input?.notebook_path;
+  // File-less events (prompts, Bash, ...) keep crediting the last file this session touched
+  const filePath = getToolFile(inp) ?? getLastFile(inp);
   const heartbeat: Heartbeat =
-    filePath && path.isAbsolute(filePath)
+    filePath
       ? { entity: filePath, entityType: 'file', projectFolder: inp.cwd }
       : { entity: inp.cwd, entityType: 'app', projectFolder: inp.cwd };
 

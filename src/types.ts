@@ -1,5 +1,6 @@
 export type State = {
   lastHeartbeatAt?: number;
+  lastFile?: string;
 };
 
 export type HookEvent =

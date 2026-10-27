@@ -4939,20 +4939,35 @@ function getStateFile(inp) {
   if (transcriptPath) return `${transcriptPath}.wakatime`;
   return path2.join(getHomeDirectory(), ".wakatime", "claude-code", `${sanitizeFileName(getFallbackStateId(inp))}.wakatime`);
 }
-function shouldSendHeartbeat(inp) {
-  if (!inp) return false;
+function readState(inp) {
   try {
-    const last = JSON.parse(fs2.readFileSync(getStateFile(inp), "utf-8")).lastHeartbeatAt ?? timestamp();
-    return timestamp() - last >= 60;
+    return JSON.parse(fs2.readFileSync(getStateFile(inp), "utf-8"));
   } catch {
-    return true;
+    return {};
   }
 }
-async function updateState(inp) {
+function getToolFile(inp) {
+  const filePath = inp?.tool_input?.file_path ?? inp?.tool_input?.notebook_path;
+  return filePath && path2.isAbsolute(filePath) ? filePath : void 0;
+}
+function getLastFile(inp) {
+  const file = readState(inp).lastFile;
+  return file && fs2.existsSync(file) ? file : void 0;
+}
+function shouldSendHeartbeat(inp) {
+  if (!inp) return false;
+  if (getToolFile(inp)) return true;
+  const last = readState(inp).lastHeartbeatAt;
+  return last === void 0 || timestamp() - last >= 60;
+}
+async function updateState(inp, sent = true) {
   if (!inp) return;
+  const state = readState(inp);
+  if (sent) state.lastHeartbeatAt = timestamp();
+  state.lastFile = getToolFile(inp) ?? state.lastFile;
   const file = getStateFile(inp);
   await fs2.promises.mkdir(path2.dirname(file), { recursive: true });
-  await fs2.promises.writeFile(file, JSON.stringify({ lastHeartbeatAt: timestamp() }, null, 2));
+  await fs2.promises.writeFile(file, JSON.stringify(state, null, 2));
 }
 async function getClaudeVersion(inp) {
   const transcriptPath = inp?.transcript_path?.trim();
@@ -5849,8 +5864,8 @@ function getSetting(options2, env, key) {
   return process.env[env] ?? options2.getSetting("settings", key);
 }
 function buildHeartbeat(options2, inp) {
-  const filePath = inp.tool_input?.file_path ?? inp.tool_input?.notebook_path;
-  const heartbeat = filePath && path5.isAbsolute(filePath) ? { entity: filePath, entityType: "file", projectFolder: inp.cwd } : { entity: inp.cwd, entityType: "app", projectFolder: inp.cwd };
+  const filePath = getToolFile(inp) ?? getLastFile(inp);
+  const heartbeat = filePath ? { entity: filePath, entityType: "file", projectFolder: inp.cwd } : { entity: inp.cwd, entityType: "app", projectFolder: inp.cwd };
   const root = getSetting(options2, "CODEX_WAKATIME_PRIVACY_ROOT", "codex_wakatime_privacy_root");
   const project = getSetting(options2, "CODEX_WAKATIME_PRIVACY_PROJECT", "codex_wakatime_privacy_project");
   if (!root || !project) return heartbeat;
@@ -5904,6 +5919,8 @@ async function main() {
       if (await sendHeartbeat(inp)) {
         await updateState(inp);
       }
+    } else {
+      await updateState(inp, false);
     }
   } catch (err) {
     logger.errorException(err);
