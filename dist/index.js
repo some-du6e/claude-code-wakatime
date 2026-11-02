@@ -5865,7 +5865,10 @@ function getSetting(options2, env, key) {
 }
 function buildHeartbeat(options2, inp) {
   const filePath = getToolFile(inp) ?? getLastFile(inp);
-  const heartbeat = filePath ? { entity: filePath, entityType: "file", projectFolder: inp.cwd } : { entity: inp.cwd, entityType: "app", projectFolder: inp.cwd };
+  const heartbeat = filePath ? { entity: filePath, entityType: "file", projectFolder: inp.cwd } : (
+    // Not the cwd: Hackatime would list the folder (e.g. a worktree path) as a file
+    { entity: "Claude Code", entityType: "app", projectFolder: inp.cwd }
+  );
   const root = getSetting(options2, "CODEX_WAKATIME_PRIVACY_ROOT", "codex_wakatime_privacy_root");
   const project = getSetting(options2, "CODEX_WAKATIME_PRIVACY_PROJECT", "codex_wakatime_privacy_project");
   if (!root || !project) return heartbeat;

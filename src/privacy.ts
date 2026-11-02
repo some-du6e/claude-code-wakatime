@@ -28,7 +28,8 @@ export function buildHeartbeat(options: Options, inp: Input): Heartbeat {
   const heartbeat: Heartbeat =
     filePath
       ? { entity: filePath, entityType: 'file', projectFolder: inp.cwd }
-      : { entity: inp.cwd, entityType: 'app', projectFolder: inp.cwd };
+      : // Not the cwd: Hackatime would list the folder (e.g. a worktree path) as a file
+        { entity: 'Claude Code', entityType: 'app', projectFolder: inp.cwd };
 
   const root = getSetting(options, 'CODEX_WAKATIME_PRIVACY_ROOT', 'codex_wakatime_privacy_root');
   const project = getSetting(options, 'CODEX_WAKATIME_PRIVACY_PROJECT', 'codex_wakatime_privacy_project');
