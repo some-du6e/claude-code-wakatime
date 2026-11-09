@@ -4950,9 +4950,45 @@ function getToolFile(inp) {
   const filePath = inp?.tool_input?.file_path ?? inp?.tool_input?.notebook_path;
   return filePath && path2.isAbsolute(filePath) ? filePath : void 0;
 }
+function isUnderDir(file, dir) {
+  const relative3 = path2.relative(dir, file);
+  return relative3 !== "" && !relative3.startsWith("..") && !path2.isAbsolute(relative3);
+}
+function getBashFile(inp) {
+  if (inp?.tool_name !== "Bash" || !inp.cwd) return void 0;
+  const command = inp.tool_input?.command;
+  if (!command) return void 0;
+  const tokens = command.split(/[\s;|&<>()`"'=]+/).slice(0, 200);
+  for (const token of tokens) {
+    const cleaned = token.replace(/(:\d+){1,2}:?$/, "");
+    if (!cleaned || cleaned.startsWith("-") || !/[/.]/.test(cleaned) || /^[a-z]+:\/\//i.test(cleaned)) continue;
+    const resolved = path2.resolve(inp.cwd, cleaned.replace(/^~(?=\/)/, os2.homedir()));
+    if (!isUnderDir(resolved, inp.cwd)) continue;
+    try {
+      if (fs2.statSync(resolved).isFile()) return resolved;
+    } catch {
+    }
+  }
+  return void 0;
+}
 function getLastFile(inp) {
   const file = readState(inp).lastFile;
   return file && fs2.existsSync(file) ? file : void 0;
+}
+function getProjectStateFile(inp) {
+  return path2.join(getHomeDirectory(), ".wakatime", "claude-code", "projects", `${sanitizeFileName(path2.resolve(inp.cwd))}.json`);
+}
+function getProjectLastFile(inp) {
+  if (!inp.cwd) return void 0;
+  try {
+    const file = JSON.parse(fs2.readFileSync(getProjectStateFile(inp), "utf-8")).lastFile;
+    return file && fs2.existsSync(file) ? file : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function getActivityFile(inp) {
+  return getToolFile(inp) ?? getBashFile(inp) ?? getLastFile(inp) ?? getProjectLastFile(inp);
 }
 function shouldSendHeartbeat(inp) {
   if (!inp) return false;
@@ -4964,10 +5000,16 @@ async function updateState(inp, sent = true) {
   if (!inp) return;
   const state = readState(inp);
   if (sent) state.lastHeartbeatAt = timestamp();
-  state.lastFile = getToolFile(inp) ?? state.lastFile;
+  const touched = getToolFile(inp) ?? getBashFile(inp);
+  state.lastFile = touched ?? state.lastFile;
   const file = getStateFile(inp);
   await fs2.promises.mkdir(path2.dirname(file), { recursive: true });
   await fs2.promises.writeFile(file, JSON.stringify(state, null, 2));
+  if (touched && inp.cwd && isUnderDir(touched, path2.resolve(inp.cwd))) {
+    const projectFile = getProjectStateFile(inp);
+    await fs2.promises.mkdir(path2.dirname(projectFile), { recursive: true });
+    await fs2.promises.writeFile(projectFile, JSON.stringify({ lastFile: touched }, null, 2));
+  }
 }
 async function getClaudeVersion(inp) {
   const transcriptPath = inp?.transcript_path?.trim();
@@ -5857,24 +5899,26 @@ var fs5 = __toESM(require("fs"));
 var path5 = __toESM(require("path"));
 function isUnderRoot(value, root) {
   if (!value) return false;
-  const relative2 = path5.relative(root, path5.resolve(value));
-  return relative2 === "" || !relative2.startsWith("..") && !path5.isAbsolute(relative2);
+  const relative3 = path5.relative(root, path5.resolve(value));
+  return relative3 === "" || !relative3.startsWith("..") && !path5.isAbsolute(relative3);
 }
 function getSetting(options2, env, key) {
   return process.env[env] ?? options2.getSetting("settings", key);
 }
 function buildHeartbeat(options2, inp) {
-  const filePath = getToolFile(inp) ?? getLastFile(inp);
+  const filePath = getActivityFile(inp);
   const heartbeat = filePath ? { entity: filePath, entityType: "file", projectFolder: inp.cwd } : (
-    // Not the cwd: Hackatime would list the folder (e.g. a worktree path) as a file
-    { entity: "Claude Code", entityType: "app", projectFolder: inp.cwd }
+    // Last resort. Not the cwd: Hackatime would list the folder (e.g. a worktree path) as a file
+    { entity: "Claude Code (no file)", entityType: "app", projectFolder: inp.cwd }
   );
   const root = getSetting(options2, "CODEX_WAKATIME_PRIVACY_ROOT", "codex_wakatime_privacy_root");
   const project = getSetting(options2, "CODEX_WAKATIME_PRIVACY_PROJECT", "codex_wakatime_privacy_project");
   if (!root || !project) return heartbeat;
   const resolvedRoot = path5.resolve(root);
   if (!isUnderRoot(heartbeat.entity, resolvedRoot) && !isUnderRoot(inp.cwd, resolvedRoot)) return heartbeat;
-  const entityRoot = path5.resolve(getSetting(options2, "CODEX_WAKATIME_PRIVACY_ENTITY_ROOT", "codex_wakatime_privacy_entity_root") ?? resolvedRoot);
+  const entityRoot = path5.resolve(
+    getSetting(options2, "CODEX_WAKATIME_PRIVACY_ENTITY_ROOT", "codex_wakatime_privacy_entity_root") ?? resolvedRoot
+  );
   const ext = heartbeat.entityType === "file" && path5.extname(heartbeat.entity) || ".txt";
   const entity = path5.join(entityRoot, `vague_file${ext}`);
   try {
