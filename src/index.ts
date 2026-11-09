@@ -7,6 +7,7 @@ import { VERSION } from './version';
 import { Dependencies } from './dependencies';
 import { logger, LogLevel } from './logger';
 import { Input } from './types';
+import { buildHeartbeat } from './privacy';
 import { buildOptions, formatArguments, getClaudeVersion, parseInput, shouldSendHeartbeat, updateState } from './utils';
 
 const options = new Options();
@@ -14,18 +15,20 @@ const deps = new Dependencies(options, logger);
 const execFileAsync = promisify(execFile);
 
 async function sendHeartbeat(inp: Input | undefined): Promise<boolean> {
-  const projectFolder = inp?.cwd;
   const claudeVersion = await getClaudeVersion(inp);
 
   const wakatime_cli = deps.getCliLocation();
 
-  const args: string[] = ['--sync-ai-activity', '--plugin', `claude-code/${claudeVersion} claude-code-wakatime/${VERSION}`];
-  if (projectFolder) {
-    args.push('--project-folder');
-    args.push(projectFolder);
+  const plugin = `claude-code/${claudeVersion} claude-code-wakatime/${VERSION}`;
+  const heartbeat = buildHeartbeat(options, inp!);
+  const args: string[] = ['--entity', heartbeat.entity, '--entity-type', heartbeat.entityType, '--category', 'ai coding', '--plugin', plugin];
+  if (heartbeat.projectFolder) args.push('--project-folder', heartbeat.projectFolder);
+  if (heartbeat.project) args.push('--project', heartbeat.project);
+  if (inp?.hook_event_name === 'PostToolUse' && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(inp.tool_name ?? '')) {
+    args.push('--write');
   }
 
-  logger.debug(`Syncing AI activity: ${formatArguments(wakatime_cli, args)}`);
+  logger.debug(`Sending heartbeat: ${formatArguments(wakatime_cli, args)}`);
 
   const execOptions = buildOptions();
   try {
@@ -54,6 +57,8 @@ async function main() {
       if (await sendHeartbeat(inp)) {
         await updateState(inp);
       }
+    } else {
+      await updateState(inp, false);
     }
   } catch (err) {
     logger.errorException(err);

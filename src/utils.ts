@@ -27,22 +27,93 @@ function getStateFile(inp: Input): string {
   return path.join(getHomeDirectory(), '.wakatime', 'claude-code', `${sanitizeFileName(getFallbackStateId(inp))}.wakatime`);
 }
 
-export function shouldSendHeartbeat(inp?: Input): boolean {
-  if (!inp) return false;
-
+function readState(inp: Input): State {
   try {
-    const last = (JSON.parse(fs.readFileSync(getStateFile(inp), 'utf-8')) as State).lastHeartbeatAt ?? timestamp();
-    return timestamp() - last >= 60;
+    return JSON.parse(fs.readFileSync(getStateFile(inp), 'utf-8')) as State;
   } catch {
-    return true;
+    return {};
   }
 }
 
-export async function updateState(inp?: Input) {
+export function getToolFile(inp?: Input): string | undefined {
+  const filePath = inp?.tool_input?.file_path ?? inp?.tool_input?.notebook_path;
+  return filePath && path.isAbsolute(filePath) ? filePath : undefined;
+}
+
+function isUnderDir(file: string, dir: string): boolean {
+  const relative = path.relative(dir, file);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+// Most agent work happens in Bash (sed -n, cat, rg, go test, ...). Credit the first
+// existing file under the cwd that the command names, e.g. `sed -n 1,40p src/x.go`.
+export function getBashFile(inp?: Input): string | undefined {
+  if (inp?.tool_name !== 'Bash' || !inp.cwd) return undefined;
+  const command = inp.tool_input?.command;
+  if (!command) return undefined;
+
+  const tokens = command.split(/[\s;|&<>()`"'=]+/).slice(0, 200);
+  for (const token of tokens) {
+    const cleaned = token.replace(/(:\d+){1,2}:?$/, ''); // path/x.go:12:3
+    if (!cleaned || cleaned.startsWith('-') || !/[/.]/.test(cleaned) || /^[a-z]+:\/\//i.test(cleaned)) continue;
+    const resolved = path.resolve(inp.cwd, cleaned.replace(/^~(?=\/)/, os.homedir()));
+    if (!isUnderDir(resolved, inp.cwd)) continue;
+    try {
+      if (fs.statSync(resolved).isFile()) return resolved;
+    } catch {}
+  }
+  return undefined;
+}
+
+export function getLastFile(inp: Input): string | undefined {
+  const file = readState(inp).lastFile;
+  return file && fs.existsSync(file) ? file : undefined;
+}
+
+// Shared by every session in the same cwd, so a fresh session that hasn't
+// touched a file yet still credits the project's most recent one.
+function getProjectStateFile(inp: Input): string {
+  return path.join(getHomeDirectory(), '.wakatime', 'claude-code', 'projects', `${sanitizeFileName(path.resolve(inp.cwd))}.json`);
+}
+
+export function getProjectLastFile(inp: Input): string | undefined {
+  if (!inp.cwd) return undefined;
+  try {
+    const file = (JSON.parse(fs.readFileSync(getProjectStateFile(inp), 'utf-8')) as State).lastFile;
+    return file && fs.existsSync(file) ? file : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function getActivityFile(inp: Input): string | undefined {
+  return getToolFile(inp) ?? getBashFile(inp) ?? getLastFile(inp) ?? getProjectLastFile(inp);
+}
+
+export function shouldSendHeartbeat(inp?: Input): boolean {
+  if (!inp) return false;
+  // File tool activity always goes through; everything else (Bash included) is throttled
+  if (getToolFile(inp)) return true;
+
+  const last = readState(inp).lastHeartbeatAt;
+  return last === undefined || timestamp() - last >= 60;
+}
+
+export async function updateState(inp?: Input, sent = true) {
   if (!inp) return;
+  const state = readState(inp);
+  if (sent) state.lastHeartbeatAt = timestamp();
+  const touched = getToolFile(inp) ?? getBashFile(inp);
+  state.lastFile = touched ?? state.lastFile;
   const file = getStateFile(inp);
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
-  await fs.promises.writeFile(file, JSON.stringify({ lastHeartbeatAt: timestamp() } as State, null, 2));
+  await fs.promises.writeFile(file, JSON.stringify(state, null, 2));
+
+  if (touched && inp.cwd && isUnderDir(touched, path.resolve(inp.cwd))) {
+    const projectFile = getProjectStateFile(inp);
+    await fs.promises.mkdir(path.dirname(projectFile), { recursive: true });
+    await fs.promises.writeFile(projectFile, JSON.stringify({ lastFile: touched } as State, null, 2));
+  }
 }
 
 export async function getClaudeVersion(inp: Input | undefined): Promise<string> {

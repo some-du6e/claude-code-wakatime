@@ -1,5 +1,6 @@
 export type State = {
   lastHeartbeatAt?: number;
+  lastFile?: string;
 };
 
 export type HookEvent =
@@ -25,6 +26,8 @@ export type Input = {
   parent_uuid?: string;
   parentSessionId?: string;
   parent_session_id?: string;
+  tool_name?: string;
+  tool_input?: { file_path?: string; notebook_path?: string; command?: string };
 };
 
 export type TranscriptLog = {
